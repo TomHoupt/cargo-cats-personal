@@ -85,7 +85,13 @@ app.MapGet("/getphoto", (string path) =>
         Console.WriteLine("[DEBUG] Path parameter is empty or null");
         return Results.BadRequest("Path parameter is required");
     }
-    var fullPath = Path.Combine(uploadsPath, path);
+    var baseFull = Path.GetFullPath(uploadsPath);
+    var fullPath = Path.GetFullPath(Path.Combine(baseFull, path));
+    if (!fullPath.StartsWith(baseFull + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+        && fullPath != baseFull)
+    {
+        throw new ArgumentException("Invalid file path");
+    }
     Console.WriteLine($"[DEBUG] Full file path: {fullPath}");
 
     if (!File.Exists(fullPath))
