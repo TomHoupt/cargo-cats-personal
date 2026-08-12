@@ -132,13 +132,14 @@ def xml_parse(xml_content):
     
     try:
         logger.debug("Parsing XML document...")
-        # Configure XML parser for document processing
+        # Configure XML parser with secure settings to prevent XXE attacks
         parser = lxml_etree.XMLParser(
-            resolve_entities=True,  # Process external entities
-            no_network=False,       # Allow network access for resources
-            load_dtd=True,         # Load Document Type Definitions
-            dtd_validation=False,   # Skip validation for performance
-            recover=True           # Attempt recovery from errors
+            resolve_entities=False,  # Disable external entity resolution (XXE protection)
+            no_network=True,         # Block all network access
+            load_dtd=False,          # Disable DTD loading
+            dtd_validation=False,    # Skip validation for performance
+            recover=True,            # Attempt recovery from errors
+            huge_tree=False          # Prevent billion laughs and other entity expansion attacks
         )
         
         root = lxml_etree.fromstring(xml_content.encode('utf-8'), parser)
