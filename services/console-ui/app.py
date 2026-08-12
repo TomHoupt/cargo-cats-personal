@@ -15,6 +15,7 @@ import re
 import yaml
 from typing import Dict, Optional
 from kubernetes import client, config
+from functools import wraps
 
 
 
@@ -39,6 +40,62 @@ try:
 except Exception as e:
     logger.warning(f"Kubernetes client not initialized: {str(e)}")
     v1 = None
+
+
+########################################
+# Authentication
+########################################
+# Load API key from environment variable for securing sensitive endpoints
+CONSOLE_API_KEY = os.getenv('CONSOLE_API_KEY', '')
+
+def require_api_key(f):
+    """
+    Decorator to require API key authentication for sensitive endpoints.
+    
+    The API key must be provided in the X-API-Key header and match the
+    CONSOLE_API_KEY environment variable. If CONSOLE_API_KEY is not set,
+    all requests to protected endpoints will be denied.
+    
+    This protects against unauthorized access to exploit, scan, traffic
+    generation, and data deletion endpoints.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # If no API key is configured, deny all access to protected endpoints
+        if not CONSOLE_API_KEY:
+            logger.warning(f"Access denied to {request.path}: CONSOLE_API_KEY not configured")
+            return jsonify({
+                "status": "error",
+                "message": "API key authentication is required but not configured. Set CONSOLE_API_KEY environment variable."
+            }), 503
+        
+        # Check for API key in request header
+        provided_key = request.headers.get('X-API-Key', '')
+        
+        if not provided_key:
+            logger.warning(f"Access denied to {request.path}: No API key provided")
+            return jsonify({
+                "status": "error",
+                "message": "API key required. Provide X-API-Key header."
+            }), 401
+        
+        if provided_key != CONSOLE_API_KEY:
+            logger.warning(f"Access denied to {request.path}: Invalid API key")
+            return jsonify({
+                "status": "error",
+                "message": "Invalid API key"
+            }), 403
+        
+        # API key is valid, proceed with the request
+        return f(*args, **kwargs)
+    
+    return decorated_function
+
+# Log authentication status at startup
+if CONSOLE_API_KEY:
+    logger.info(f"Console API key authentication enabled (key length: {len(CONSOLE_API_KEY)})")
+else:
+    logger.warning("Console API key not configured - all sensitive endpoints will be protected and deny access until CONSOLE_API_KEY is set")
 
 
 # Parse Contrast API token function
@@ -285,6 +342,7 @@ def check_zap_health():
         }), 500
 
 @app.route('/zap/scan/start')
+@require_api_key
 def zap_scan():
     global stop_scan_flag, scan_running, scan_state
     
@@ -310,6 +368,7 @@ def zap_scan():
     return jsonify({"status": "success", "message": "Scan started in background"}), 200
 
 @app.route('/zap/scan/stop')
+@require_api_key
 def zap_scan_stop():
     global stop_scan_flag, scan_state, zap_url
     stop_scan_flag = True
@@ -359,12 +418,14 @@ def zap_scan_status():
     }), 200
 
 @app.route('/zap/scan/clear')
+@require_api_key
 def zap_scan_clear():
     global scan_output_buffer
     scan_output_buffer = []
     return jsonify({"status": "success", "message": "Scan output buffer cleared"}), 200
 
 @app.route('/exploit/start')
+@require_api_key
 def start_exploit():
     global exploit_running, exploit_state, stop_exploit_flag
     
@@ -378,6 +439,7 @@ def start_exploit():
     return jsonify({"status": "success", "message": "Exploit started in background"}), 200
 
 @app.route('/exploit/stop')
+@require_api_key
 def stop_exploit():
     global stop_exploit_flag, exploit_state
     stop_exploit_flag = True
@@ -396,12 +458,14 @@ def exploit_status():
     }), 200
 
 @app.route('/exploit/clear')
+@require_api_key
 def exploit_clear():
     global exploit_output_buffer
     exploit_output_buffer = []
     return jsonify({"status": "success", "message": "Exploit output buffer cleared"}), 200
 
 @app.route('/exploit/xss')
+@require_api_key
 def exploit_xss():
     global exploit_running, exploit_state, exploit_output_buffer, stop_exploit_flag
     
@@ -431,6 +495,7 @@ def exploit_xss():
         exploit_running = False
 
 @app.route('/exploit/login')
+@require_api_key
 def exploit_login():
     global exploit_running, exploit_state, exploit_output_buffer, stop_exploit_flag
     
@@ -454,6 +519,7 @@ def exploit_login():
         exploit_running = False
 
 @app.route('/exploit/command-injection')
+@require_api_key
 def exploit_command_injection():
     global exploit_running, exploit_state, exploit_output_buffer, stop_exploit_flag
     
@@ -483,6 +549,7 @@ def exploit_command_injection():
         exploit_running = False
 
 @app.route('/exploit/path-traversal')
+@require_api_key
 def exploit_path_traversal():
     global exploit_running, exploit_state, exploit_output_buffer, stop_exploit_flag
     
@@ -512,6 +579,7 @@ def exploit_path_traversal():
         exploit_running = False
 
 @app.route('/exploit/sql-injection')
+@require_api_key
 def exploit_sql_injection():
     global exploit_running, exploit_state, exploit_output_buffer, stop_exploit_flag
     
@@ -573,6 +641,7 @@ def log4shell_callback():
 
 @app.route('/exploit/log4shell-sleep')
 @app.route('/exploit/log4shell')  # backward-compatible alias
+@require_api_key
 def exploit_log4shell_sleep():
     global exploit_running, exploit_state, exploit_output_buffer, stop_exploit_flag
 
@@ -602,6 +671,7 @@ def exploit_log4shell_sleep():
         exploit_running = False
 
 @app.route('/exploit/log4shell-cmd-exec')
+@require_api_key
 def exploit_log4shell_cmd_exec():
     global exploit_running, exploit_state, exploit_output_buffer, stop_exploit_flag
 
@@ -631,6 +701,7 @@ def exploit_log4shell_cmd_exec():
         exploit_running = False
 
 @app.route('/exploit/ssjs-injection')
+@require_api_key
 def exploit_ssjs_injection():
     global exploit_running, exploit_state, exploit_output_buffer, stop_exploit_flag
     
@@ -660,6 +731,7 @@ def exploit_ssjs_injection():
         exploit_running = False
 
 @app.route('/exploit/xxe')
+@require_api_key
 def exploit_xxe():
     global exploit_running, exploit_state, exploit_output_buffer, stop_exploit_flag
     
@@ -689,6 +761,7 @@ def exploit_xxe():
         exploit_running = False
         
 @app.route('/exploit/deserialization')
+@require_api_key
 def exploit_deserialization():
     global exploit_running, exploit_state, exploit_output_buffer, stop_exploit_flag
     
@@ -718,6 +791,7 @@ def exploit_deserialization():
         exploit_running = False
 
 @app.route('/exploit/ssti')
+@require_api_key
 def exploit_ssti():
     global exploit_running, exploit_state, exploit_output_buffer, stop_exploit_flag
     
@@ -770,6 +844,7 @@ def exploit_list():
     }), 200
 
 @app.route('/traffic/start')
+@require_api_key
 def start_traffic():
     global traffic_running, traffic_state, stop_traffic_flag
     
@@ -783,6 +858,7 @@ def start_traffic():
     return jsonify({"status": "success", "message": "Traffic generation started in background"}), 200
 
 @app.route('/traffic/stop')
+@require_api_key
 def stop_traffic():
     global stop_traffic_flag, traffic_state
     stop_traffic_flag = True
@@ -801,6 +877,7 @@ def traffic_status():
     }), 200
 
 @app.route('/traffic/clear')
+@require_api_key
 def traffic_clear():
     global traffic_output_buffer
     traffic_output_buffer = []
@@ -811,6 +888,7 @@ def traffic_clear():
 ########################################
 
 @app.route('/delete/all', methods=['POST'])
+@require_api_key
 def delete_all():
     """Delete all attack incidents and assess issues for this demo's applications.
 
@@ -956,6 +1034,7 @@ def delete_all():
         }), 500
 
 @app.route('/delete/incident', methods=['POST'])
+@require_api_key
 def delete_incident():
     """Delete a specific incident by ID"""
     try:
@@ -1013,6 +1092,7 @@ def delete_incident():
         }), 500
 
 @app.route('/delete/issue', methods=['POST'])
+@require_api_key
 def delete_issue():
     """Delete a specific issue by ID"""
     try:
@@ -1070,6 +1150,7 @@ def delete_issue():
         }), 500
 
 @app.route('/delete/application', methods=['POST'])
+@require_api_key
 def delete_application():
     """Delete all incidents and issues for a specific application by application name"""
     try:
