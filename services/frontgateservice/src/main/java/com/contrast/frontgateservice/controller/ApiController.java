@@ -26,6 +26,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.HtmlUtils;
 
 import java.util.Collections;
 import java.util.Map;
@@ -185,7 +186,7 @@ public class ApiController {
                                 "<p class=\"mb-1\"><strong>Status:</strong> <span class=\"badge %s\">%s</span></p>" +
                                 "<small class=\"text-muted\">Your precious cargo is being tracked! 🐱</small>" +
                             "</div>",
-                            trackingIdValue, badgeClass, statusText
+                            HtmlUtils.htmlEscape(trackingIdValue), badgeClass, statusText
                         );
                         
                         logger.debug("Returning success HTML response");
@@ -204,7 +205,7 @@ public class ApiController {
                         "<i class=\"fas fa-times-circle me-2\"></i>" +
                         "Tracking ID \"%s\" not found. Please check the ID and try again." +
                     "</div>",
-                    trackingId
+                    HtmlUtils.htmlEscape(trackingId)
                 );
                 
                 logger.trace("Generated HTML: {}", notFoundHtml);
@@ -223,7 +224,7 @@ public class ApiController {
                         "<i class=\"fas fa-exclamation-triangle me-2\"></i>" +
                         "Unable to track shipment \"%s\" at this time. Please try again later." +
                     "</div>",
-                    trackingId
+                    HtmlUtils.htmlEscape(trackingId)
                 );
                 
                 logger.trace("Generated error HTML: {}", errorHtml);
@@ -241,7 +242,7 @@ public class ApiController {
                     "<i class=\"fas fa-exclamation-triangle me-2\"></i>" +
                     "Unable to track shipment \"%s\" at this time. Please try again later." +
                 "</div>",
-                trackingId
+                HtmlUtils.htmlEscape(trackingId)
             );
             
             logger.trace("Generated service error HTML: {}", errorHtml);
@@ -918,6 +919,6 @@ public class ApiController {
         logger.debug("Stack trace:", e);
         return ResponseEntity.status(500)
                 .contentType(org.springframework.http.MediaType.TEXT_HTML)
-                .body("<div class=\"alert alert-danger\">An error occurred: " + e.getMessage() + "</div>");
+                .body("<div class=\"alert alert-danger\">An error occurred: " + HtmlUtils.htmlEscape(e.getMessage()) + "</div>");
     }
 }
