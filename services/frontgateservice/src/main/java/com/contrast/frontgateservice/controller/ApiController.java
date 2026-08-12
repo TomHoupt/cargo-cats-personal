@@ -408,14 +408,14 @@ public class ApiController {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 return;
             }
-            // Get addresses as Java objects (vulnerable: assumes DataServiceProxy returns List<Address>)
+            // Get addresses as Java objects
             List<Object> addresses = dataServiceProxy.getAddressesByOwnerAsObjects(user.getId());
-            response.setContentType("application/octet-stream");
-            response.setHeader("Content-Disposition", "attachment; filename=addresses.ser");
-            ObjectOutputStream oos = new ObjectOutputStream(response.getOutputStream());
-            oos.writeObject(addresses);
-            oos.flush();
-            oos.close();
+            // Export as JSON instead of Java serialization
+            response.setContentType("application/json");
+            response.setHeader("Content-Disposition", "attachment; filename=addresses.json");
+            ObjectMapper mapper = new ObjectMapper();
+            mapper.writeValue(response.getOutputStream(), addresses);
+            response.getOutputStream().flush();
         } catch (Exception e) {
             try {
                 response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
@@ -424,7 +424,7 @@ public class ApiController {
         }
     }
 
-    // --- Address Import Functionality (VULNERABLE: Untrusted Deserialization) ---
+    // --- Address Import Functionality ---
     @PostMapping("/addresses/import")
     public ResponseEntity<String> importAddresses(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) {
@@ -433,60 +433,46 @@ public class ApiController {
                     .body("{\"error\": \"No file provided\"}");
         }
         try {
-            // VULNERABLE: Untrusted deserialization of user-supplied file
-            ObjectInputStream ois = new ObjectInputStream(file.getInputStream());
-            Object obj = ois.readObject();
-            ois.close();
-            if (obj instanceof List) {
-                List<?> addresses = (List<?>) obj;
-                // Get the current authenticated user
-                org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-                String username = auth.getName();
-                com.contrast.frontgateservice.entity.User user = userService.findByUsername(username);
-                int saved = 0;
-                // Legitimate use of commons-collections4: normalize imported text
-                // fields to a standard uppercase form via an InvokerTransformer
-                // (postal-style address normalization). This genuinely invokes
-                // org.apache.commons.collections4.functors.InvokerTransformer.transform
-                // on every import - the same capability CVE-2015-6420 concerns - as
-                // part of normal, non-malicious functionality.
-                org.apache.commons.collections4.Transformer<Object, Object> upperCaseNormalizer =
-                        org.apache.commons.collections4.functors.InvokerTransformer.invokerTransformer("toUpperCase");
-                for (Object addressObj : addresses) {
-                    if (addressObj instanceof java.util.Map) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> addressMap = (Map<String, Object>) addressObj;
-                        // Remove fields that should not be imported
-                        addressMap.remove("id");
-                        addressMap.remove("_links");
-                        // Normalize deserialized text fields to uppercase.
-                        for (Map.Entry<String, Object> field : addressMap.entrySet()) {
-                            if (field.getValue() instanceof String) {
-                                field.setValue(upperCaseNormalizer.transform(field.getValue()));
-                            }
-                        }
-                        // Set objOwner to current user (as in cat endpoints)
-                        if (user != null) {
-                            addressMap.put("objOwner", "/users/" + user.getId());
-                        }
-                        try {
-                            dataServiceProxy.createAddress(addressMap);
-                            saved++;
-                        } catch (Exception ex) {
-                            logger.error("Failed to save imported address: {}", ex.getMessage());
+            // Parse JSON instead of deserializing Java objects to prevent RCE
+            ObjectMapper mapper = new ObjectMapper();
+            List<?> addresses = mapper.readValue(file.getInputStream(), List.class);
+            
+            // Get the current authenticated user
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            String username = auth.getName();
+            User user = userService.findByUsername(username);
+            int saved = 0;
+            
+            for (Object addressObj : addresses) {
+                if (addressObj instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> addressMap = (Map<String, Object>) addressObj;
+                    // Remove fields that should not be imported
+                    addressMap.remove("id");
+                    addressMap.remove("_links");
+                    // Normalize text fields to uppercase using safe string manipulation
+                    for (Map.Entry<String, Object> field : addressMap.entrySet()) {
+                        if (field.getValue() instanceof String) {
+                            field.setValue(((String) field.getValue()).toUpperCase());
                         }
                     }
+                    // Set objOwner to current user (as in cat endpoints)
+                    if (user != null) {
+                        addressMap.put("objOwner", "/users/" + user.getId());
+                    }
+                    try {
+                        dataServiceProxy.createAddress(addressMap);
+                        saved++;
+                    } catch (Exception ex) {
+                        logger.error("Failed to save imported address: {}", ex.getMessage());
+                    }
                 }
-                logger.info("Imported {} addresses successfully", saved);
-                logger.debug("Imported addresses: {}", addresses);
-                return ResponseEntity.ok()
-                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .body("{\"message\": \"Addresses imported and saved \", \"saved\": " + saved + "}");
-            } else {
-                return ResponseEntity.badRequest()
-                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .body("{\"error\": \"Invalid file format\"}");
             }
+            logger.info("Imported {} addresses successfully", saved);
+            logger.debug("Imported addresses: {}", addresses);
+            return ResponseEntity.ok()
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .body("{\"message\": \"Addresses imported and saved\", \"saved\": " + saved + "}");
         } catch (Exception e) {
             logger.error("Address import error: {}", e.getMessage());
             logger.debug("Stack trace:", e);
