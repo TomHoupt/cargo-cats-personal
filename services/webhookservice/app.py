@@ -8,6 +8,8 @@ import mysql.connector
 from mysql.connector import Error
 import sys
 import logging
+import re
+import ipaddress
 
 # Configure environment variables with defaults
 DB_HOST = os.getenv('DB_HOST', 'cargocats-db')
@@ -260,6 +262,53 @@ def webhook_notify():
         logger.error(f"Failed to send webhook notification: {str(e)}")
         return jsonify({"error": f"Failed to send webhook notification: {str(e)}"}), 500
 
+def validate_hostname_or_ip(target):
+    """
+    Validate that the target is a legitimate hostname or IP address.
+    Returns (is_valid, sanitized_target, error_message)
+    """
+    if not target or not isinstance(target, str):
+        return False, None, "Target must be a non-empty string"
+    
+    # Remove leading/trailing whitespace
+    target = target.strip()
+    
+    # Check length constraints
+    if len(target) > 253:
+        return False, None, "Target exceeds maximum length of 253 characters"
+    
+    if len(target) == 0:
+        return False, None, "Target cannot be empty"
+    
+    # Try to parse as IP address first
+    try:
+        # This will raise ValueError if not a valid IP
+        ip = ipaddress.ip_address(target)
+        # Valid IP address
+        return True, str(ip), None
+    except ValueError:
+        pass
+    
+    # If not an IP, validate as hostname/domain
+    # Hostname validation: alphanumeric, hyphens, dots, underscores
+    # Must not contain shell metacharacters or control characters
+    hostname_pattern = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.\_]*[a-zA-Z0-9])?$')
+    
+    if not hostname_pattern.match(target):
+        return False, None, "Target contains invalid characters. Only alphanumeric, hyphens, dots, and underscores are allowed"
+    
+    # Additional check: no consecutive dots
+    if '..' in target:
+        return False, None, "Target contains consecutive dots"
+    
+    # Check for shell metacharacters as an extra safety measure
+    dangerous_chars = [';', '&', '|', '$', '`', '(', ')', '<', '>', '\n', '\r', '\\', '"', "'", ' ']
+    for char in dangerous_chars:
+        if char in target:
+            return False, None, f"Target contains forbidden character: {char}"
+    
+    return True, target, None
+
 @app.route('/testConnection', methods=['POST'])
 def test_connection():   
     logger.info("Received test connection request")
@@ -276,12 +325,30 @@ def test_connection():
         logger.error("Error: URL parameter is missing")
         return jsonify({"error": "URL parameter is required"}), 400
     
+    # Validate the target hostname/IP to prevent injection attacks
+    is_valid, sanitized_target, error_msg = validate_hostname_or_ip(url)
+    
+    if not is_valid:
+        logger.error(f"Invalid target provided: {url}. Reason: {error_msg}")
+        return jsonify({
+            "error": "Invalid target for connection test",
+            "details": error_msg
+        }), 400
+    
     try:
-        command = f"ping -c 1 {url}"
-        logger.info(f"Executing command: {command}")
+        # Use subprocess with argument list (NOT shell=True) to prevent shell injection
+        # This passes arguments directly to ping without shell interpretation
+        command_list = ['ping', '-c', '1', sanitized_target]
+        logger.info(f"Executing command: {' '.join(command_list)}")
         
-        # Execute the command in shell - this is the vulnerable part!
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
+        # Execute the command WITHOUT shell=True - this prevents shell injection
+        result = subprocess.run(
+            command_list,
+            shell=False,  # Critical: shell=False prevents shell injection
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
         
         logger.info(f"Command completed with return code: {result.returncode}")
         logger.info(f"Command stdout: {result.stdout.strip()}")
@@ -291,7 +358,7 @@ def test_connection():
         return jsonify({
             "message": "Test connection completed",
             "original_url": url,
-            "command_executed": command,
+            "sanitized_target": sanitized_target,
             "return_code": result.returncode,
             "stdout": result.stdout,
             "stderr": result.stderr,
@@ -301,6 +368,9 @@ def test_connection():
     except subprocess.TimeoutExpired:
         logger.error("Error: Command timed out after 30 seconds")
         return jsonify({"error": "Command timed out after 30 seconds"}), 500
+    except FileNotFoundError:
+        logger.error("Error: ping command not found on system")
+        return jsonify({"error": "ping command not available on this system"}), 500
     except Exception as e:
         logger.error(f"Failed to execute command: {str(e)}")
         return jsonify({"error": f"Failed to execute command: {str(e)}"}), 500
