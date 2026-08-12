@@ -34,7 +34,6 @@ public class SecurityConfig {
             .authorizeRequests(authz -> authz
                 .antMatchers("/", "/css/**", "/js/**", "/images/**", "/register", "/login").permitAll()
                 .antMatchers(HttpMethod.GET, "/api/shipments/track/**").permitAll() // Allow public shipment tracking
-                .antMatchers(HttpMethod.DELETE, "/api/cats/**").permitAll() //oops, probs shoundn't allow everyone to delete
                 .antMatchers("/api/**").authenticated()
                 .anyRequest().authenticated()
             )
